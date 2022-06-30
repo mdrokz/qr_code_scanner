@@ -225,42 +225,69 @@ class QRView(
            activity?.contentResolver?.openInputStream(uri)
         val imageBitmap = BitmapFactory.decodeStream(imageStream)
 
-        val width = imageBitmap.width
-        val height = imageBitmap.height
+        val newBitMap = resizeBitmap(imageBitmap,500,500);
 
-        val pixels = IntArray(width * height)
-        imageBitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        if(newBitMap != null) {
+            val width = newBitMap.width
+            val height = newBitMap.height
 
-        val hints: MutableMap<DecodeHintType, Any?> = Hashtable()
-        hints[DecodeHintType.TRY_HARDER] = java.lang.Boolean.TRUE
+            val pixels = IntArray(width * height)
+            newBitMap.getPixels(pixels, 0, width, 0, 0, width, height)
 
-        val codeFormatsToHint: MutableList<BarcodeFormat> = ArrayList()
-        codeFormatsToHint.add(BarcodeFormat.QR_CODE)
-        hints[DecodeHintType.POSSIBLE_FORMATS] = codeFormatsToHint
+            val hints: MutableMap<DecodeHintType, Any?> = Hashtable()
+            hints[DecodeHintType.TRY_HARDER] = java.lang.Boolean.TRUE
 
-        val multiFormatReader = MultiFormatReader()
-        multiFormatReader.setHints(hints)
+            val codeFormatsToHint: MutableList<BarcodeFormat> = ArrayList()
+            codeFormatsToHint.add(BarcodeFormat.QR_CODE)
+            hints[DecodeHintType.POSSIBLE_FORMATS] = codeFormatsToHint
 
-        val source = RGBLuminanceSource(width, height, pixels)
+            val multiFormatReader = MultiFormatReader()
+            multiFormatReader.setHints(hints)
 
-        val binaryBitmap = BinaryBitmap(HybridBinarizer(source))
+            val source = RGBLuminanceSource(width, height, pixels)
 
-        try {
-            val rawResult = multiFormatReader.decodeWithState(binaryBitmap)
+            val binaryBitmap = BinaryBitmap(HybridBinarizer(source))
 
-            val text = rawResult.text;
+            try {
+                val rawResult = multiFormatReader.decodeWithState(binaryBitmap)
 
-            if(text.isNotEmpty()) {
-                val event = mapOf("name" to "barcode", "data" to text)
+                val text = rawResult.text;
 
-                result.success(event)
+                if(text.isNotEmpty()) {
+                    val event = mapOf("name" to "barcode", "data" to text)
+
+                    result.success(event)
+                }
+
+            } catch (re: ReaderException) {
+                result.error("QR Code Reader Exception",re.message,re.toString());
+            } finally {
+                multiFormatReader.reset()
             }
-
-        } catch (re: ReaderException) {
-        } finally {
-            multiFormatReader.reset()
         }
+    }
 
+    private fun resizeBitmap(image: Bitmap, maxWidth: Int, maxHeight: Int): Bitmap? {
+        var image = image
+        var width: Int = image.getWidth()
+        var height: Int = image.getHeight()
+        if (width > height) {
+            // landscape
+            val ratio = width.toFloat() / maxWidth
+            width = maxWidth
+            height = (height / ratio).toInt()
+        } else if (height > width) {
+            // portrait
+            val ratio = height.toFloat() / maxHeight
+            height = maxHeight
+            width = (width / ratio).toInt()
+        } else {
+            // square
+            height = maxHeight
+            width = maxWidth
+        }
+        image = Bitmap.createScaledBitmap(image, width, height, true)
+        return image
     }
 
     private fun pauseCamera(result: MethodChannel.Result) {
