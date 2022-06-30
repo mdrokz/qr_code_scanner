@@ -1,436 +1,47 @@
 package net.touchcapture.qr.flutterqr
 
-import android.Manifest
-import android.annotation.SuppressLint
-import android.content.Context
-import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
-import android.hardware.Camera.CameraInfo
-import android.net.Uri
-import android.os.Build
-import android.provider.SyncStateContract.Constants
-import android.view.View
-import androidx.core.content.ContextCompat
-import com.google.zxing.*
-import com.google.zxing.common.HybridBinarizer
-import com.journeyapps.barcodescanner.BarcodeCallback
-import com.journeyapps.barcodescanner.BarcodeResult
-import com.journeyapps.barcodescanner.DefaultDecoderFactory
-import io.flutter.plugin.common.BinaryMessenger
-import io.flutter.plugin.common.MethodCall
-import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugin.common.PluginRegistry
-import io.flutter.plugin.platform.PlatformView
-import net.touchcapture.qr.flutterqr.QrShared.activity
-import java.io.File
-import java.io.InputStream
-import java.util.*
-import kotlin.Result
+import androidx.annotation.NonNull
+import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.plugins.activity.ActivityAware
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 
+class FlutterQrPlugin : FlutterPlugin, ActivityAware {
 
-class QRView(
-    private val context: Context,
-    messenger: BinaryMessenger,
-    private val id: Int,
-    private val params: HashMap<String, Any>
-) : PlatformView, MethodChannel.MethodCallHandler, PluginRegistry.RequestPermissionsResultListener {
-
-    private var isTorchOn = false
-
-    private var isPaused = false
-
-    private var barcodeView: CustomFramingRectBarcodeView? = null
-
-    private val channel: MethodChannel = MethodChannel(
-        messenger, "net.touchcapture.qr.flutterqr/qrview_$id"
-    )
-
-    private var unRegisterLifecycleCallback: UnRegisterLifecycleCallback? = null
-
-    private val cameraRequestCode = QrShared.CAMERA_REQUEST_ID + this.id
-
-    init {
-        QrShared.binding?.addRequestPermissionsResultListener(this)
-
-        channel.setMethodCallHandler(this)
-
-        barcodeView
-
-        unRegisterLifecycleCallback = QrShared.activity?.registerLifecycleCallbacks(
-            onPause = {
-                if (!isPaused && hasCameraPermission) barcodeView?.pause()
-
-            },
-            onResume = {
-                if (!hasCameraPermission) checkAndRequestPermission()
-                else if (!isPaused && hasCameraPermission) barcodeView?.resume()
-            }
-        )
-    }
-
-    override fun dispose() {
-        unRegisterLifecycleCallback?.invoke()
-
-        QrShared.binding?.removeRequestPermissionsResultListener(this)
-
-        barcodeView?.pause()
-        barcodeView = null
-    }
-
-    override fun getView(): View = initBarCodeView()
-
-    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
-        @Suppress("UNCHECKED_CAST")
-        when (call.method) {
-            "startScan" -> startScan(call.arguments as? List<Int>, result)
-
-            "stopScan" -> stopScan()
-
-            "flipCamera" -> flipCamera(result)
-
-            "toggleFlash" -> toggleFlash(result)
-
-            "pauseCamera" -> pauseCamera(result)
-
-            "analyzeImage" -> analyzeImage(call,result)
-
-            // Stopping camera is the same as pausing camera
-            "stopCamera" -> pauseCamera(result)
-
-            "resumeCamera" -> resumeCamera(result)
-
-            "requestPermissions" -> checkAndRequestPermission()
-
-            "getCameraInfo" -> getCameraInfo(result)
-
-            "getFlashInfo" -> getFlashInfo(result)
-
-            "getSystemFeatures" -> getSystemFeatures(result)
-
-            "changeScanArea" -> changeScanArea(
-                dpScanAreaWidth = requireNotNull(call.argument<Double>("scanAreaWidth")),
-                dpScanAreaHeight = requireNotNull(call.argument<Double>("scanAreaHeight")),
-                cutOutBottomOffset = requireNotNull(call.argument<Double>("cutOutBottomOffset")),
-                result = result,
+    /** Plugin registration embedding v2 */
+    override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+        flutterPluginBinding.platformViewRegistry
+            .registerViewFactory(
+                VIEW_TYPE_ID,
+                QRViewFactory(flutterPluginBinding.binaryMessenger)
             )
-
-            "invertScan" -> setInvertScan(
-                isInvert = call.argument<Boolean>("isInvertScan") ?: false,
-            )
-
-            else -> result.notImplemented()
-        }
     }
 
-    private fun initBarCodeView(): CustomFramingRectBarcodeView {
-        var barcodeView = barcodeView
-
-        if (barcodeView == null) {
-            barcodeView = CustomFramingRectBarcodeView(QrShared.activity).also {
-                this.barcodeView = it
-            }
-
-            barcodeView.decoderFactory = DefaultDecoderFactory(null, null, null, 2)
-
-            if (params[PARAMS_CAMERA_FACING] as Int == 1) {
-                barcodeView.cameraSettings?.requestedCameraId = CameraInfo.CAMERA_FACING_FRONT
-            }
-        } else if (!isPaused) {
-            barcodeView.resume()
-        }
-
-        return barcodeView
+    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        QrShared.activity = null
+        QrShared.binding = null
     }
 
-    // region Camera Info
-
-    private fun getCameraInfo(result: MethodChannel.Result) {
-        val barcodeView = barcodeView ?: return barCodeViewNotSet(result)
-
-        result.success(barcodeView.cameraSettings.requestedCameraId)
+    override fun onAttachedToActivity(activityPluginBinding: ActivityPluginBinding) {
+        QrShared.activity = activityPluginBinding.activity
+        QrShared.binding = activityPluginBinding
     }
 
-    private fun getFlashInfo(result: MethodChannel.Result) {
-        if (barcodeView == null) return barCodeViewNotSet(result)
-
-        result.success(isTorchOn)
+    override fun onDetachedFromActivityForConfigChanges() {
+        QrShared.activity = null
+        QrShared.binding = null
     }
 
-    private fun hasFlash(): Boolean {
-        return hasSystemFeature(PackageManager.FEATURE_CAMERA_FLASH)
+    override fun onReattachedToActivityForConfigChanges(activityPluginBinding: ActivityPluginBinding) {
+        QrShared.activity = activityPluginBinding.activity
+        QrShared.binding = activityPluginBinding
     }
 
-    @SuppressLint("UnsupportedChromeOsCameraSystemFeature")
-    private fun hasBackCamera(): Boolean {
-        return hasSystemFeature(PackageManager.FEATURE_CAMERA)
+    override fun onDetachedFromActivity() {
+        QrShared.activity = null
+        QrShared.binding = null
     }
-
-    private fun hasFrontCamera(): Boolean {
-        return hasSystemFeature(PackageManager.FEATURE_CAMERA_FRONT)
-    }
-
-    private fun hasSystemFeature(feature: String): Boolean =
-        context.packageManager.hasSystemFeature(feature)
-
-    private fun getSystemFeatures(result: MethodChannel.Result) {
-        try {
-            result.success(
-                mapOf(
-                    "hasFrontCamera" to hasFrontCamera(),
-                    "hasBackCamera" to hasBackCamera(),
-                    "hasFlash" to hasFlash(),
-                    "activeCamera" to barcodeView?.cameraSettings?.requestedCameraId
-                )
-            )
-        } catch (e: Exception) {
-            result.error("", e.message, null)
-        }
-    }
-
-    // endregion
-
-    // region Camera Controls
-
-    private fun flipCamera(result: MethodChannel.Result) {
-        val barcodeView = barcodeView ?: return barCodeViewNotSet(result)
-
-        barcodeView.pause()
-
-        val settings = barcodeView.cameraSettings
-        if (settings.requestedCameraId == CameraInfo.CAMERA_FACING_FRONT) {
-            settings.requestedCameraId = CameraInfo.CAMERA_FACING_BACK
-        } else settings.requestedCameraId = CameraInfo.CAMERA_FACING_FRONT
-
-        barcodeView.resume()
-
-        result.success(settings.requestedCameraId)
-    }
-
-    private fun toggleFlash(result: MethodChannel.Result) {
-        val barcodeView = barcodeView ?: return barCodeViewNotSet(result)
-
-        if (hasFlash()) {
-            barcodeView.setTorch(!isTorchOn)
-            isTorchOn = !isTorchOn
-            result.success(isTorchOn)
-        } else {
-            result.error(ERROR_CODE_NOT_SET, ERROR_MESSAGE_FLASH_NOT_FOUND, null)
-        }
-    }
-
-    private fun analyzeImage(call: MethodCall, result: MethodChannel.Result) {
-        val uri = Uri.fromFile( File(call.arguments.toString()))
-
-        val imageStream: InputStream? =
-           activity?.contentResolver?.openInputStream(uri)
-        val imageBitmap = BitmapFactory.decodeStream(imageStream)
-
-        val width = imageBitmap.width
-        val height = imageBitmap.height
-
-        val pixels = IntArray(width * height)
-        imageBitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-
-        val hints: MutableMap<DecodeHintType, Any?> = Hashtable()
-        hints[DecodeHintType.TRY_HARDER] = java.lang.Boolean.TRUE
-
-        val codeFormatsToHint: MutableList<BarcodeFormat> = ArrayList()
-        codeFormatsToHint.add(BarcodeFormat.QR_CODE)
-        hints[DecodeHintType.POSSIBLE_FORMATS] = codeFormatsToHint
-
-        val multiFormatReader = MultiFormatReader()
-        multiFormatReader.setHints(hints)
-
-        val source = RGBLuminanceSource(width, height, pixels)
-
-        val binaryBitmap = BinaryBitmap(HybridBinarizer(source))
-
-        try {
-            val rawResult = multiFormatReader.decodeWithState(binaryBitmap)
-
-            val text = rawResult.text;
-
-            if(text.isNotEmpty()) {
-                val event = mapOf("name" to "barcode", "data" to text)
-
-                result.success(CHANNEL_METHOD_ON_ANAYLZE_QR, event)
-            }
-
-        } catch (re: ReaderException) {
-        } finally {
-            multiFormatReader.reset()
-        }
-
-    }
-
-    private fun pauseCamera(result: MethodChannel.Result) {
-        val barcodeView = barcodeView ?: return barCodeViewNotSet(result)
-
-        if (barcodeView.isPreviewActive) {
-            isPaused = true
-            barcodeView.pause()
-        }
-
-        result.success(true)
-    }
-
-    private fun resumeCamera(result: MethodChannel.Result) {
-        val barcodeView = barcodeView ?: return barCodeViewNotSet(result)
-
-        if (!barcodeView.isPreviewActive) {
-            isPaused = false
-            barcodeView.resume()
-        }
-
-        result.success(true)
-    }
-
-    private fun startScan(arguments: List<Int>?, result: MethodChannel.Result) {
-        checkAndRequestPermission()
-
-        val allowedBarcodeTypes = getAllowedBarcodeTypes(arguments, result)
-
-        barcodeView?.decodeContinuous(
-            object : BarcodeCallback {
-                override fun barcodeResult(result: BarcodeResult) {
-                    if (allowedBarcodeTypes.isEmpty() || allowedBarcodeTypes.contains(result.barcodeFormat)) {
-                        val code = mapOf(
-                            "code" to result.text,
-                            "type" to result.barcodeFormat.name,
-                            "rawBytes" to result.rawBytes
-                        )
-
-                        channel.invokeMethod(CHANNEL_METHOD_ON_RECOGNIZE_QR, code)
-                    }
-                }
-
-                override fun possibleResultPoints(resultPoints: List<ResultPoint>) = Unit
-            }
-        )
-    }
-
-    private fun stopScan() {
-        barcodeView?.stopDecoding()
-    }
-
-    private fun setInvertScan(isInvert: Boolean) {
-        val barcodeView = barcodeView ?: return
-        with(barcodeView) {
-            pause()
-            cameraSettings.isScanInverted = isInvert
-            resume()
-        }
-    }
-
-    private fun changeScanArea(
-        dpScanAreaWidth: Double,
-        dpScanAreaHeight: Double,
-        cutOutBottomOffset: Double,
-        result: MethodChannel.Result
-    ) {
-        setScanAreaSize(dpScanAreaWidth, dpScanAreaHeight, cutOutBottomOffset)
-
-        result.success(true)
-    }
-
-    private fun setScanAreaSize(
-        dpScanAreaWidth: Double,
-        dpScanAreaHeight: Double,
-        dpCutOutBottomOffset: Double
-    ) {
-        barcodeView?.setFramingRect(
-            dpScanAreaWidth.convertDpToPixels(),
-            dpScanAreaHeight.convertDpToPixels(),
-            dpCutOutBottomOffset.convertDpToPixels(),
-        )
-    }
-
-    // endregion
-
-    // region permissions
-
-    private val hasCameraPermission: Boolean
-        get() = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.CAMERA
-                ) == PackageManager.PERMISSION_GRANTED
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ): Boolean {
-        if (requestCode != cameraRequestCode) return false
-
-        val permissionGranted =
-            grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
-
-        channel.invokeMethod(CHANNEL_METHOD_ON_PERMISSION_SET, permissionGranted)
-
-        return permissionGranted
-    }
-
-    private fun checkAndRequestPermission() {
-        if (hasCameraPermission) {
-            channel.invokeMethod(CHANNEL_METHOD_ON_PERMISSION_SET, true)
-            return
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            QrShared.activity?.requestPermissions(
-                arrayOf(Manifest.permission.CAMERA),
-                cameraRequestCode
-            )
-        }
-    }
-
-    // endregion
-
-    // region barcode common
-
-    private fun getAllowedBarcodeTypes(
-        arguments: List<Int>?,
-        result: MethodChannel.Result
-    ): List<BarcodeFormat> {
-        return try {
-            arguments?.map {
-                BarcodeFormat.values()[it]
-            }.orEmpty()
-        } catch (e: Exception) {
-            result.error("", e.message, null)
-
-            emptyList()
-        }
-    }
-
-    private fun barCodeViewNotSet(result: MethodChannel.Result) {
-        result.error(
-            ERROR_CODE_NOT_SET,
-            ERROR_MESSAGE_NOT_SET,
-            null
-        )
-    }
-
-    // endregion
-
-    // region helpers
-
-    private fun Double.convertDpToPixels() =
-        (this * context.resources.displayMetrics.density).toInt()
-
-    // endregion
 
     companion object {
-        private const val CHANNEL_METHOD_ON_PERMISSION_SET = "onPermissionSet"
-        private const val CHANNEL_METHOD_ON_RECOGNIZE_QR = "onRecognizeQR"
-        private const val CHANNEL_METHOD_ON_ANAYLZE_QR = "onAnalyzeQR"
-
-        private const val PARAMS_CAMERA_FACING = "cameraFacing"
-
-        private const val ERROR_CODE_NOT_SET = "404"
-
-        private const val ERROR_MESSAGE_NOT_SET = "No barcode view found"
-        private const val ERROR_MESSAGE_FLASH_NOT_FOUND = "This device doesn't support flash"
+        private const val VIEW_TYPE_ID = "net.touchcapture.qr.flutterqr/qrview"
     }
 }

@@ -4,12 +4,15 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.hardware.Camera.CameraInfo
+import android.net.Uri
 import android.os.Build
+import android.provider.SyncStateContract.Constants
 import android.view.View
 import androidx.core.content.ContextCompat
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.ResultPoint
+import com.google.zxing.*
+import com.google.zxing.common.HybridBinarizer
 import com.journeyapps.barcodescanner.BarcodeCallback
 import com.journeyapps.barcodescanner.BarcodeResult
 import com.journeyapps.barcodescanner.DefaultDecoderFactory
@@ -18,6 +21,11 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.PluginRegistry
 import io.flutter.plugin.platform.PlatformView
+import net.touchcapture.qr.flutterqr.QrShared.activity
+import java.io.File
+import java.io.InputStream
+import java.util.*
+import kotlin.Result
 
 
 class QRView(
@@ -45,6 +53,8 @@ class QRView(
         QrShared.binding?.addRequestPermissionsResultListener(this)
 
         channel.setMethodCallHandler(this)
+
+        barcodeView
 
         unRegisterLifecycleCallback = QrShared.activity?.registerLifecycleCallbacks(
             onPause = {
@@ -81,6 +91,8 @@ class QRView(
             "toggleFlash" -> toggleFlash(result)
 
             "pauseCamera" -> pauseCamera(result)
+
+            "analyzeImage" -> analyzeImage(call,result)
 
             // Stopping camera is the same as pausing camera
             "stopCamera" -> pauseCamera(result)
@@ -204,6 +216,51 @@ class QRView(
         } else {
             result.error(ERROR_CODE_NOT_SET, ERROR_MESSAGE_FLASH_NOT_FOUND, null)
         }
+    }
+
+    private fun analyzeImage(call: MethodCall, result: MethodChannel.Result) {
+        val uri = Uri.fromFile( File(call.arguments.toString()))
+
+        val imageStream: InputStream? =
+           activity?.contentResolver?.openInputStream(uri)
+        val imageBitmap = BitmapFactory.decodeStream(imageStream)
+
+        val width = imageBitmap.width
+        val height = imageBitmap.height
+
+        val pixels = IntArray(width * height)
+        imageBitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+
+        val hints: MutableMap<DecodeHintType, Any?> = Hashtable()
+        hints[DecodeHintType.TRY_HARDER] = java.lang.Boolean.TRUE
+
+        val codeFormatsToHint: MutableList<BarcodeFormat> = ArrayList()
+        codeFormatsToHint.add(BarcodeFormat.QR_CODE)
+        hints[DecodeHintType.POSSIBLE_FORMATS] = codeFormatsToHint
+
+        val multiFormatReader = MultiFormatReader()
+        multiFormatReader.setHints(hints)
+
+        val source = RGBLuminanceSource(width, height, pixels)
+
+        val binaryBitmap = BinaryBitmap(HybridBinarizer(source))
+
+        try {
+            val rawResult = multiFormatReader.decodeWithState(binaryBitmap)
+
+            val text = rawResult.text;
+
+            if(text.isNotEmpty()) {
+                val event = mapOf("name" to "barcode", "data" to text)
+
+                result.success(CHANNEL_METHOD_ON_ANAYLZE_QR, event)
+            }
+
+        } catch (re: ReaderException) {
+        } finally {
+            multiFormatReader.reset()
+        }
+
     }
 
     private fun pauseCamera(result: MethodChannel.Result) {
@@ -367,6 +424,7 @@ class QRView(
     companion object {
         private const val CHANNEL_METHOD_ON_PERMISSION_SET = "onPermissionSet"
         private const val CHANNEL_METHOD_ON_RECOGNIZE_QR = "onRecognizeQR"
+        private const val CHANNEL_METHOD_ON_ANAYLZE_QR = "onAnalyzeQR"
 
         private const val PARAMS_CAMERA_FACING = "cameraFacing"
 
@@ -376,4 +434,3 @@ class QRView(
         private const val ERROR_MESSAGE_FLASH_NOT_FOUND = "This device doesn't support flash"
     }
 }
-
