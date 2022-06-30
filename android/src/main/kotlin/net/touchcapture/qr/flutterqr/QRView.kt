@@ -253,7 +253,7 @@ class QRView(
             if(text.isNotEmpty()) {
                 val event = mapOf("name" to "barcode", "data" to text)
 
-                result.success(CHANNEL_METHOD_ON_ANAYLZE_QR, event)
+                result.success(event)
             }
 
         } catch (re: ReaderException) {
