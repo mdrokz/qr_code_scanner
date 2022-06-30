@@ -250,6 +250,14 @@ class QRViewController {
     }
   }
 
+  Future<String> analyzeImage(String path) async {
+    try {
+      return await _channel.invokeMethod('analyzeImage', path);
+    } on PlatformException catch (e) {
+      throw CameraException(e.code, e.message);
+    }
+  }
+
   /// Flips the camera between available modes
   Future<CameraFacing> flipCamera() async {
     try {
