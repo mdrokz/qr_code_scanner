@@ -254,9 +254,7 @@ class QRView(
                 val text = rawResult.text;
 
                 if(text.isNotEmpty()) {
-                    val event = mapOf("name" to "barcode", "data" to text)
-
-                    result.success(event)
+                    result.success(text)
                 }
 
             } catch (re: ReaderException) {
@@ -264,6 +262,8 @@ class QRView(
             } finally {
                 multiFormatReader.reset()
             }
+        } else {
+            result.error("QR Code Reader Exception","Bitmap is null, Invalid Qr Code Image","Bitmap is null, Invalid Qr Code Image");
         }
     }
 
